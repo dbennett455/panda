@@ -49,8 +49,8 @@ extern volatile int rr_replay_requested;
 extern volatile int rr_record_requested;
 extern volatile int rr_end_record_requested;
 extern volatile int rr_end_replay_requested;
-extern const char *rr_requested_name;
-extern const char *rr_snapshot_name;
+extern char *rr_requested_name;
+extern char *rr_snapshot_name;
 
 // used from monitor.c 
 int  rr_do_begin_record(const char *name, void *cpu_state);
@@ -61,6 +61,10 @@ void rr_reset_state(void *cpu_state);
 
 //mz display indication of replay progress
 extern void replay_progress(void);
+
+//bdg helper to find out how many instructions
+//    are in our log
+uint64_t replay_get_total_num_instructions(void);
 
 void rr_quit_cpu_loop(void);
 void rr_set_program_point(void);

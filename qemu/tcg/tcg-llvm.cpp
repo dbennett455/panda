@@ -39,13 +39,13 @@ extern "C" {
 }
 
 #include "tcg-llvm.h"
+#include "panda_memlog.h"
 
 extern "C" {
 #include "config.h"
 #include "qemu-common.h"
 #include "disas.h"
 
-#include "panda_memlog.h"
 #include "panda_plugin.h"
 
 #if defined(CONFIG_SOFTMMU)
@@ -285,22 +285,29 @@ public:
  * the last generated function */
 class TJITMemoryManager: public SectionMemoryManager {
     JITMemoryManager* m_base;
-    ptrdiff_t m_lastFunctionSize;
+    std::map<const Function *, ptrdiff_t> m_functionSizes;
 public:
     TJITMemoryManager():
-        m_base(JITMemoryManager::CreateDefaultMemManager()),
-        m_lastFunctionSize(0) {}
+        m_base(JITMemoryManager::CreateDefaultMemManager()) {}
     ~TJITMemoryManager() { delete m_base; }
 
-    ptrdiff_t getLastFunctionSize() const { return m_lastFunctionSize; }
+    ptrdiff_t getFunctionSize(const Function *F) const {
+        std::map<const Function *, ptrdiff_t>::const_iterator it
+            = m_functionSizes.find(F);
+        if (it == m_functionSizes.end()) {
+            return 0;
+        } else {
+            return it->second;
+        }
+    }
 
     uint8_t *startFunctionBody(const Function *F, uintptr_t &ActualSize) {
-        m_lastFunctionSize = 0;
+        m_functionSizes.erase(F);
         return m_base->startFunctionBody(F, ActualSize);
     }
     void endFunctionBody(const Function *F, uint8_t *FunctionStart,
                                 uint8_t *FunctionEnd) {
-        m_lastFunctionSize = FunctionEnd - FunctionStart;
+        m_functionSizes[F] = FunctionEnd - FunctionStart;
         m_base->endFunctionBody(F, FunctionStart, FunctionEnd);
     }
 
@@ -387,7 +394,7 @@ TCGLLVMContextPrivate::TCGLLVMContextPrivate()
     m_functionPassManager = new FunctionPassManager(m_module);
     m_functionPassManager->add(
             new DataLayout(*m_executionEngine->getDataLayout()));
-    
+
     /* Try doing -O3 -Os: optimization level 3, with extra optimizations for
      * code size
      */
@@ -427,7 +434,7 @@ TCGLLVMContextPrivate::~TCGLLVMContextPrivate()
         delete m_functionPassManager;
         m_functionPassManager = NULL;
     }
- 
+
     // the following line will also delete
     // m_moduleProvider, m_module and all its functions
     if (m_executionEngine) {
@@ -446,7 +453,7 @@ Value* TCGLLVMContextPrivate::getPtrForValue(int idx)
     TCGTemp &temp = s->temps[idx];
 
     assert(idx < s->nb_globals || s->temps[idx].temp_local);
-    
+
     if(m_memValuesPtr[idx] == NULL) {
         assert(idx < s->nb_globals);
 
@@ -670,7 +677,7 @@ inline Value* TCGLLVMContextPrivate::generateQemuMemOp(bool ld,
 #ifdef CONFIG_SOFTMMU
 
     uintptr_t helperFuncAddr;
-    
+
     if (panda_use_memcb){
         helperFuncAddr = ld ? (uint64_t) qemu_panda_ld_helpers[bits>>4]:
                                (uint64_t) qemu_panda_st_helpers[bits>>4];
@@ -794,7 +801,7 @@ int TCGLLVMContextPrivate::generateOperation(int opc, const TCGArg *args)
 
             tcg_target_ulong helperAddrC = (tcg_target_ulong)
                    cast<ConstantInt>(helperAddr)->getZExtValue();
-            
+
             const char *helperName = tcg_helper_get_name(m_tcgContext,
                                                          (void*) helperAddrC);
             assert(helperName);
@@ -882,6 +889,7 @@ int TCGLLVMContextPrivate::generateOperation(int opc, const TCGArg *args)
 #define __OP_SETCOND(opc_name, bits)                                \
     case opc_name: {                                                \
         Value* retptr = getPtrForValue(args[0]);                    \
+        __attribute__((unused))                                     \
         Value* ret = m_builder.CreateLoad(retptr);                  \
         Value* v1  = getValue(args[1]);                             \
         Value* v2  = getValue(args[2]);                             \
@@ -919,9 +927,9 @@ int TCGLLVMContextPrivate::generateOperation(int opc, const TCGArg *args)
         m_tbFunction->getBasicBlockList().push_back(finished);      \
         m_builder.SetInsertPoint(finished);                         \
     } break;
-    
+
     __OP_SETCOND(INDEX_op_setcond_i32, 32)
-    
+
 #if TCG_TARGET_REG_BITS == 64
     __OP_SETCOND(INDEX_op_setcond_i64, 64)
 #endif
@@ -1359,12 +1367,18 @@ void TCGLLVMContextPrivate::generateCode(TCGContext *s, TranslationBlock *tb)
                     wordPtrType()),
                 true);
             // volatile store of current PC
-            m_builder.CreateStore(ConstantInt::get(wordType(), args[0]),
+	    llvm::Instruction *i = 
+	      m_builder.CreateStore(ConstantInt::get(wordType(), args[0]),
                 m_builder.CreateIntToPtr(
                     ConstantInt::get(wordType(),
                         (uint64_t) &tcg_llvm_runtime.last_pc),
                     wordPtrType()),
-                true);
+                true);	    
+	    // TRL 2014 hack to annotate that last instruction as the one
+	    // that sets PC
+	    LLVMContext& C = i->getContext();
+	    MDNode* N = MDNode::get(C, MDString::get(C, "pcupdate"));
+	    i->setMetadata("pcupdate.md", N);
         }
 
         args += generateOperation(opc, args);
@@ -1399,7 +1413,10 @@ void TCGLLVMContextPrivate::generateCode(TCGContext *s, TranslationBlock *tb)
         tb->llvm_tc_ptr = (uint8_t*)
                 m_executionEngine->getPointerToFunction(m_tbFunction);
         tb->llvm_tc_end = tb->llvm_tc_ptr +
-                m_jitMemoryManager->getLastFunctionSize();
+                m_jitMemoryManager->getFunctionSize(m_tbFunction);
+
+        assert(tb->llvm_tc_ptr);
+        assert(tb->llvm_tc_end > tb->llvm_tc_ptr);
     } else {
         tb->llvm_tc_ptr = 0;
         tb->llvm_tc_end = 0;
@@ -1463,7 +1480,7 @@ void TCGLLVMContext::generateCode(TCGContext *s, TranslationBlock *tb)
     m_private->generateCode(s, tb);
 }
 
-void TCGLLVMContext::writeModule(char *path){
+void TCGLLVMContext::writeModule(const char *path){
     std::string Error;
     raw_ostream *outfile;
     outfile = new raw_fd_ostream(path, Error,
@@ -1513,6 +1530,7 @@ void tcg_llvm_tb_free(TranslationBlock *tb)
         tb->llvm_function->eraseFromParent();
         tb->llvm_function = NULL;
         tb->llvm_tc_ptr = NULL;
+        tb->llvm_tc_end = NULL;
     }
 }
 
@@ -1546,7 +1564,7 @@ uintptr_t tcg_llvm_qemu_tb_exec(void *env1, TranslationBlock *tb)
     return next_tb;
 }
 
-void tcg_llvm_write_module(TCGLLVMContext *l, char *path){
+void tcg_llvm_write_module(TCGLLVMContext *l, const char *path){
     l->writeModule(path);
 }
 

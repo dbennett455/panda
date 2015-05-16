@@ -180,12 +180,12 @@ DATA_TYPE REGPARM glue(glue(__ld, SUFFIX), MMUSUFFIX)(target_ulong addr,
     // PANDA instrumentation: memory read
     panda_cb_list *plist;
     for(plist = panda_cbs[PANDA_CB_VIRT_MEM_READ]; plist != NULL;
-            plist = plist->next) {
+            plist = panda_cb_list_next(plist)) {
         plist->entry.virt_mem_read(env, env->panda_guest_pc, addr,
             DATA_SIZE, &res);
     }
     for(plist = panda_cbs[PANDA_CB_PHYS_MEM_READ]; plist != NULL;
-            plist = plist->next) {
+            plist = panda_cb_list_next(plist)) {
         plist->entry.phys_mem_read(env, env->panda_guest_pc,
             cpu_get_phys_addr(env, addr), DATA_SIZE, &res);
     }
@@ -247,7 +247,7 @@ static DATA_TYPE glue(glue(slow_ld, SUFFIX), MMUSUFFIX)(target_ulong addr,
     // rwhelan: redundant?
     /*panda_cb_list *plist;
     for(plist = panda_cbs[PANDA_CB_VIRT_MEM_READ]; plist != NULL;
-            plist = plist->next) {
+            plist = panda_cb_list_next(plist)) {
         plist->entry.virt_mem_read(env, env->panda_guest_pc, addr,
             DATA_SIZE, &res);
     }*/
@@ -332,12 +332,12 @@ void REGPARM glue(glue(__st, SUFFIX), MMUSUFFIX)(target_ulong addr,
     // PANDA instrumentation: memory write
     panda_cb_list *plist;
     for(plist = panda_cbs[PANDA_CB_VIRT_MEM_WRITE]; plist != NULL;
-            plist = plist->next) {
+            plist = panda_cb_list_next(plist)) {
         plist->entry.virt_mem_write(env, env->panda_guest_pc, addr,
             DATA_SIZE, &val);
     }
     for(plist = panda_cbs[PANDA_CB_PHYS_MEM_WRITE]; plist != NULL;
-            plist = plist->next) {
+            plist = panda_cb_list_next(plist)) {
         plist->entry.phys_mem_write(env, env->panda_guest_pc,
             cpu_get_phys_addr(env, addr), DATA_SIZE, &val);
     }
@@ -403,7 +403,7 @@ static void glue(glue(slow_st, SUFFIX), MMUSUFFIX)(target_ulong addr,
     // PANDA instrumentation: memory write
     // rwhelan: redundant?
     /*panda_cb_list *plist;
-    for(plist = panda_cbs[PANDA_CB_VIRT_MEM_WRITE]; plist != NULL; plist = plist->next) {
+    for(plist = panda_cbs[PANDA_CB_VIRT_MEM_WRITE]; plist != NULL; plist = panda_cb_list_next(plist)) {
         plist->entry.virt_mem_write(env, env->panda_guest_pc, addr, DATA_SIZE, &val);
     }*/
 #endif
@@ -422,7 +422,7 @@ static void glue(glue(slow_st, SUFFIX), MMUSUFFIX)(target_ulong addr,
             /* XXX: not efficient, but simple */
             /* Note: relies on the fact that tlb_fill() does not remove the
              * previous page from the TLB cache.  */
-            for(i = DATA_SIZE - 1; i >= 0; i--) {
+            for(i = 0; i < DATA_SIZE; i++) {
 #ifdef TARGET_WORDS_BIGENDIAN
                 glue(slow_stb, MMUSUFFIX)(addr + i, val >> (((DATA_SIZE - 1) * 8) - (i * 8)),
                                           mmu_idx, retaddr);

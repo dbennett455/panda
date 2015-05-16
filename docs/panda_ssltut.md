@@ -33,11 +33,24 @@ Setting up the VM
 
 For this tutorial, we'll be working off of an [i386 Debian squeeze
 virtual machine created by Aurelien
-Jarno](http://people.debian.org/~aurel32/qemu/i386/). If you want to
-follow along without creating your own recording, there is [a sample
-virtual machine image and recording log
-available](http://amnesia.gtisc.gatech.edu/~moyix/ssltut.tar.gz) (beware
-though, it clocks in at around 2GB).
+Jarno](http://people.debian.org/~aurel32/qemu/i386/). If you're interested
+in using these virtual machines, you'll need a more recent copy of qemu to
+convert these images to a lower version of qcow2 which PANDA supports. You can
+do this with:
+
+    qemu-img convert -f qcow2 -O qcow2 -o compat=0.10 \
+    debian_squeeze_i386_desktop.qcow2 debian_squeeze_i386_desktop_tut.qcow2
+    
+where `debian_squeeze_i386_desktop.qcow2` is the example name of the qcow2 image
+you're looking to downgrade and `debian_squeeze_i386_desktop_tut.qcow2` is the
+new output file. Also, note again that this is using your distro's more recent 
+version of qemu-img, not PANDA's. This command is needed if you're running 
+into the following error:
+
+    'ide0-hd0' uses a qcow2 feature which is not supported by this qemu
+    version: QCOW version 3
+
+If you want to follow along without creating your own recording, you can download the [ssltut recording](http://www.rrshare.org/detail/47/) from [rrshare.org](http://www.rrshare.org/).
 
 Once you have the VM, boot it using
 
@@ -81,7 +94,7 @@ To get started, boot up the VM. In addition to the arguments used to
 boot the VM in the previous section, we will also tell QEMU to capture
 all packets sent and received by the VM to a file called `ssltut.pcap`:
 
-    x86_64-softmmu/qemu-system-x86_64 -hda ~/qcow/debian_squeeze_i386_desktop_tut.qcow2 \
+    x86_64-softmmu/qemu-system-x86_64 -hda debian_squeeze_i386_desktop_tut.qcow2 \
         -m 256 -monitor stdio -net nic,model=e1000 \
         -net user -net dump,file=ssltut.pcap
 
@@ -110,7 +123,7 @@ the SSL session aside from the handshake. This isn't required, however.
 Once the connection has been successfully made, end the recording
 session from the QEMU monitor and quit.
 
-    (qemu) end_record ssltut
+    (qemu) end_record
     (qemu) quit
 
 Examining the Encrypted Data
@@ -124,7 +137,7 @@ information and create a configuration file for `keyfind`. It depends on
 the community-supported version of `scapy`, which can be installed using
 Mercurial:
 
-    $ hg clone http://hg.secdev.org/scapy-com
+    $ hg clone https://bitbucket.org/secdev/scapy-com
     $ cd scapy-com
     $ sudo python setup.py install
 
@@ -166,8 +179,7 @@ hours to run with `keyfind` enabled. This is what the output looks like:
     brendan@brendantemp:~/git/panda/qemu$ echo "begin_replay ssltut" | \
         x86_64-softmmu/qemu-system-x86_64 -hda debian_squeeze_i386_desktop_tut.qcow2 \
         -m 256 -monitor stdio -vnc :0 -net nic,model=e1000 -net user \
-        -panda-plugin x86_64-softmmu/panda_plugins/panda_callstack_instr.so \
-        -panda-plugin x86_64-softmmu/panda_plugins/panda_keyfind.so 
+        -panda "callstack_instr;keyfind"
     Initializing plugin callstack_instr
     Initializing plugin keyfind
     Couldn't open keyfind_candidates.txt; no key tap candidates defined.
@@ -377,7 +389,7 @@ capture:
 
 If we like, we can now paste this into a Wireshark config file and
 decrypt the session using the [procedure documented
-here](http://ask.wireshark.org/answer_link/4238/). For our sample
+here](https://ask.wireshark.org/questions/4229/follow-ssl-stream-using-master-key-and-session-id). For our sample
 capture the configuration file looks like:
 
     RSA Session-ID:acd4b061aee65594d0ebdec5212076c35cfe5bf9c895305d2036584b17bdc889 Master-Key:f6e162a5891fa91fd60d16bedc1718d201e18dedde6defbcc68e5a15b82932e2a84d4832a2816fab5c6663a8d4187c91
@@ -415,8 +427,7 @@ Now, we run the replay:
 
     $ echo "begin_replay ssltut" | x86_64-softmmu/qemu-system-x86_64 -hda debian_squeeze_i386_desktop_tut.qcow2 \
         -m 256 -monitor stdio -vnc :0 -net nic,model=e1000 -net user \
-        -panda-plugin x86_64-softmmu/panda_plugins/panda_callstack_instr.so \
-        -panda-plugin x86_64-softmmu/panda_plugins/panda_textprinter.so
+        -panda 'callstack_instr;textprinter'
 
 It will produce two files, `read_tap_buffers.txt.gz` and
 `write_tap_buffers.txt.gz`. Let's focus on `write_tap_buffers.txt.gz`

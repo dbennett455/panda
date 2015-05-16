@@ -195,19 +195,27 @@ extern int generate_llvm;
 extern int execute_llvm;
 extern const int has_llvm_engine;
 
-// PANDA: externed here because we don't want to pull in the target-specific
-// pieces of QEMU
-extern bool panda_add_arg(const char *, int);
-extern bool panda_load_plugin(const char *);
-extern void panda_unload_plugins(void);
 
 struct TCGLLVMContext* tcg_llvm_initialize(void);
 void tcg_llvm_destroy(void);
 #endif
 
+// PANDA: externed here because we don't want to pull in the target-specific
+// pieces of QEMU
+extern bool panda_add_arg(const char *, int);
+extern bool panda_load_plugin(const char *);
+extern void panda_unload_plugins(void);
+extern char *panda_plugin_path(const char *name);
+
+void pandalog_open(const char *path, const char *mode);
+int  pandalog_close(void);
+int pandalog = 0;
+int panda_in_main_loop = 0;
+
 #include "ui/qemu-spice.h"
 
 #include "rr_log_all.h"
+#include "replay_fix.h"
 
 //#define DEBUG_NET
 //#define DEBUG_SLIRP
@@ -279,8 +287,6 @@ uint8_t *boot_splash_filedata;
 int boot_splash_filedata_size;
 uint8_t qemu_extra_params_fw[2];
 
-// defined in panda/tubtf.c
-extern int tubtf_on;
 
 typedef struct FWBootEntry FWBootEntry;
 
@@ -298,6 +304,7 @@ uint64_t node_mem[MAX_NODES];
 uint64_t node_cpumask[MAX_NODES];
 
 uint8_t qemu_uuid[16];
+
 
 static QEMUBootSetHandler *boot_set_handler;
 static void *boot_set_opaque;
@@ -1363,6 +1370,7 @@ void qemu_kill_report(void)
 {
     if (shutdown_signal != -1) {
         fprintf(stderr, "qemu: terminating on signal %d", shutdown_signal);
+        printf ("here i am\n");
         if (shutdown_pid == 0) {
             /* This happens for eg ^C at the terminal, so it's worth
              * avoiding printing an odd message in that case.
@@ -1562,9 +1570,13 @@ static void main_loop(void)
         if (__builtin_expect(rr_replay_requested, 0)) {
             //block signals
             sigprocmask(SIG_BLOCK, &blockset, &oldset);
-            rr_do_begin_replay(rr_requested_name, first_cpu);
-            quit_timers();
-            rr_replay_requested = 0;
+            if (0 != rr_do_begin_replay(rr_requested_name, first_cpu)){
+                printf("Failed to start replay\n");
+                fix_replay_stuff();
+            } else { // we have to unblock signals, so we can't just continue on failure
+                quit_timers();
+                rr_replay_requested = 0;
+            }
             //unblock signals
             sigprocmask(SIG_SETMASK, &oldset, NULL);
         }
@@ -1574,6 +1586,7 @@ static void main_loop(void)
             rr_do_end_record();
             rr_reset_state(first_cpu);
             rr_end_record_requested = 0;
+	    vm_start();
         }
         if (rr_end_replay_requested && rr_in_replay()) {
             //mz restore timers
@@ -2253,6 +2266,22 @@ static void free_and_trace(gpointer mem)
     free(mem);
 }
 
+const char *qemu_loc = NULL;
+const char *qemu_file = NULL;
+
+void panda_cleanup(void);
+
+void panda_cleanup(void) {
+    // PANDA: unload plugins
+    panda_unload_plugins();
+    if (pandalog) {
+        pandalog_close();
+    }
+}
+
+
+
+
 int main(int argc, char **argv, char **envp)
 {
     const char *gdbstub_dev = NULL;
@@ -2290,6 +2319,10 @@ int main(int argc, char **argv, char **envp)
     const char *trace_events = NULL;
     const char *trace_file = NULL;
 
+    // Store for later use...
+    qemu_loc = realpath(argv[0], NULL);
+    qemu_file = canonicalize_file_name(argv[0]);
+
     // In order to load PANDA plugins all at once at the end
     const char * panda_plugin_files[16] = {};
     int nb_panda_plugins = 0;
@@ -2298,9 +2331,6 @@ int main(int argc, char **argv, char **envp)
     error_set_progname(argv[0]);
 
     g_mem_set_vtable(&mem_trace);
-    if (!g_thread_supported()) {
-        g_thread_init(NULL);
-    }
 
     runstate_init();
 
@@ -2316,7 +2346,7 @@ int main(int argc, char **argv, char **envp)
     machine = find_default_machine();
     cpu_model = NULL;
     initrd_filename = NULL;
-    ram_size = 0;
+    ram_size = DEFAULT_RAM_SIZE * 1024 * 1024;
     snapshot = 0;
     kernel_filename = NULL;
     kernel_cmdline = "";
@@ -2332,38 +2362,6 @@ int main(int argc, char **argv, char **envp)
     nb_nics = 0;
 
     autostart= 1;
-
-#if defined(CONFIG_ANDROID)
-    boot_property_init_service();
-    boot_property_add("dalvik.vm.heapsize","48m");
-
-    android_qemud_get_channel( "gps", &android_gps_cs );
-    boot_property_add("qemu.sf.fake_camera", "both");
-    android_camera_service_init();
-
-    /*
-     * CharDriverState*  cs = qemu_chr_open("radio", android_op_radio, NULL);
-        if (cs == NULL) {
-            PANIC("unsupported character device specification: %s\n"
-                        "used -help-char-devices for list of available formats",
-                    android_op_radio);
-        }
-        android_qemud_set_channel( ANDROID_QEMUD_GSM, cs);
-     */
-    android_qemud_get_channel( "gsm", &android_modem_cs );
-
-    android_hw_control_init();
-    /* Initialize audio. */
-    /*if (android_op_audio) {
-        if ( !audio_check_backend_name( 0, android_op_audio ) ) {
-            PANIC("'%s' is not a valid audio output backend. see -help-audio-out",
-                    android_op_audio);
-        }
-        setenv("QEMU_AUDIO_DRV", android_op_audio, 1);
-    }*/
-    
-    boot_property_add("qemu.hw.mainkeys","0");
-#endif
 
     /* first pass of option parsing */
     optind = 1;
@@ -3226,26 +3224,72 @@ int main(int argc, char **argv, char **envp)
                 generate_llvm = 1;
                 break;
 #endif
-	    case QEMU_OPTION_record_from:
+            case QEMU_OPTION_record_from:
                 record_name = optarg;
-	        break;
+	            break;
 
-	    case QEMU_OPTION_replay:
-	        replay_name = optarg;
-	        break;
+            case QEMU_OPTION_replay:
+                display_type = DT_NONE;
+                replay_name = optarg;
+                break;
+
+            case QEMU_OPTION_pandalog:
+                pandalog = 1;
+                pandalog_open(optarg, "w");
+                printf ("pandalogging to [%s]\n", optarg);
+                break;
 
             case QEMU_OPTION_panda_arg:
                 if(!panda_add_arg(optarg, strlen(optarg))) {
                     fprintf(stderr, "WARN: Couldn't add PANDA arg '%s': argument too long,\n", optarg);
                 }
                 break;
+
             case QEMU_OPTION_panda_plugin:
                 panda_plugin_files[nb_panda_plugins++] = optarg;
+                printf ("adding %s to panda_plugin_files %d\n", optarg, nb_panda_plugins-1);
                 break;
 
-	    case QEMU_OPTION_tubtf:
-	      printf ("tubtf logging on\n");
-	      tubtf_on = 1;
+            case QEMU_OPTION_panda_plugins:
+                {
+                    char *new_optarg = strdup(optarg);
+                    char *plugin_start = new_optarg;
+                    char *plugin_end = new_optarg;
+
+                    while (plugin_end != NULL) {
+                        plugin_end = strchr(plugin_start, ';');
+                        if (plugin_end != NULL) *plugin_end = '\0';
+                        
+                        char *opt_list;
+                        if ((opt_list = strchr(plugin_start, ':'))) {
+                            char arg_str[255];
+                            *opt_list = '\0';
+                            opt_list++;
+                            
+                            char *opt_start = opt_list, *opt_end = opt_list;
+                            while (opt_end != NULL) {
+                                opt_end = strchr(opt_start, ',');
+                                if (opt_end != NULL) *opt_end = '\0';
+                                
+                                snprintf(arg_str, 255, "%s:%s", plugin_start, opt_start);
+                                if (panda_add_arg(arg_str, strlen(arg_str))) // copies arg
+                                    printf("Adding PANDA arg %s.\n", arg_str);
+                                else
+                                    fprintf(stderr, "WARN: Couldn't add PANDA arg '%s': argument too long,\n", arg_str);
+
+                                opt_start = opt_end + 1;
+                            }
+                        }
+
+                        char *plugin_path = panda_plugin_path((const char *) plugin_start);
+                        panda_plugin_files[nb_panda_plugins++] = plugin_path;
+                        printf("adding %s to panda_plugin_files %d\n", plugin_path, nb_panda_plugins - 1);
+                        
+                        plugin_start = plugin_end + 1;
+                    }
+                    free(new_optarg);
+                    break;
+                }
 
             default:
                 os_parse_cmd_args(popt->index, optarg);
@@ -3253,17 +3297,52 @@ int main(int argc, char **argv, char **envp)
         }
     }
     loc_set_none();
+    
 #if defined(CONFIG_ANDROID)
-    DS_init();
+    if(android_input){
+        boot_property_init_service();
+        boot_property_add("dalvik.vm.heapsize","48m");
+
+        android_qemud_get_channel( "gps", &android_gps_cs );
+        boot_property_add("qemu.sf.fake_camera", "both");
+        android_camera_service_init();
+
+        /*
+        * CharDriverState*  cs = qemu_chr_open("radio", android_op_radio, NULL);
+            if (cs == NULL) {
+                PANIC("unsupported character device specification: %s\n"
+                            "used -help-char-devices for list of available formats",
+                        android_op_radio);
+            }
+            android_qemud_set_channel( ANDROID_QEMUD_GSM, cs);
+        */
+        android_qemud_get_channel( "gsm", &android_modem_cs );
+
+        android_hw_control_init();
+        /* Initialize audio. */
+        /*if (android_op_audio) {
+            if ( !audio_check_backend_name( 0, android_op_audio ) ) {
+                PANIC("'%s' is not a valid audio output backend. see -help-audio-out",
+                        android_op_audio);
+            }
+            setenv("QEMU_AUDIO_DRV", android_op_audio, 1);
+        }*/
+        
+        boot_property_add("qemu.hw.mainkeys","0");
+    
+    }
 #endif
 
     // Now that all arguments are available, we can load plugins
     int pp_idx;
     for (pp_idx = 0; pp_idx < nb_panda_plugins; pp_idx++) {
-        if(!panda_load_plugin(panda_plugin_files[pp_idx]))
-            fprintf(stderr, "WARN: Unable to load plugin `%s'\n", panda_plugin_files[pp_idx]);
+      if(!panda_load_plugin(panda_plugin_files[pp_idx])) {
+	fprintf(stderr, "FAIL: Unable to load plugin `%s'\n", panda_plugin_files[pp_idx]);
+	abort();
+      }
     }
 
+ 
     /* Open the logfile at this point, if necessary. We can't open the logfile
      * when encountering either of the logging options (-d or -D) because the
      * other one may be encountered later on the command line, changing the
@@ -3411,10 +3490,6 @@ int main(int argc, char **argv, char **envp)
     }
 
     /* init the memory */
-    if (ram_size == 0) {
-        ram_size = DEFAULT_RAM_SIZE * 1024 * 1024;
-    }
-
     configure_accelerator();
 
     qemu_init_cpu_loop();
@@ -3749,12 +3824,14 @@ int main(int argc, char **argv, char **envp)
 
     resume_all_vcpus();
 
+    panda_in_main_loop = 1;
     main_loop();
-
-    // PANDA: unload plugins
-    panda_unload_plugins();
+    panda_in_main_loop = 0;
 
     bdrv_close_all();
+
+
+    panda_cleanup();
 
     // RR: end record / replay if necessary
     if (rr_in_replay()) {

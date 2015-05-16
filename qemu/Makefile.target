@@ -13,8 +13,10 @@ ifneq ($(HWDIR),)
 include $(HWDIR)/config.mak
 endif
 include ../config.replay
-include ../panda_plugins/config.panda
 include ../panda_tools/config.panda
+
+# remove spaces from lines. skip lines starting with a #. concatenate the rest into a space-delimited list
+PANDA_PLUGINS=$(shell tr -d "[:blank:]" < ../panda_plugins/config.panda | grep -v "^\#" | xargs)
 
 TARGET_PATH=$(SRC_PATH)/target-$(TARGET_BASE_ARCH)
 $(call set-vpath, $(SRC_PATH):$(TARGET_PATH):$(SRC_PATH)/hw)
@@ -90,15 +92,20 @@ panda/panda_dynval_inst.o: QEMU_CXXFLAGS+=$(LLVM_CXXFLAGS)
 panda/panda_helper_call_morph.o: QEMU_CXXFLAGS+=$(LLVM_CXXFLAGS) 
 libobj-y = exec.o translate-all.o cpu-exec.o translate.o
 libobj-$(CONFIG_SOFTMMU) += rr_log.o
+libobj-$(CONFIG_SOFTMMU) += replay_fix.o
 libobj-y += panda_plugin.o
 libobj-y += panda/panda_memlog.o
 libobj-y += panda/panda_common.o
 libobj-y += panda/tubtf.o
-libobj-y += panda/bitvector_label_set.o panda/guestarch.o
-libobj-y += panda/panda_stats.o
-libobj-y += panda/my_mem.o panda/shad_dir_32.o
-libobj-y += panda/shad_dir_64.o
-libobj-y += panda/taint_processor.o
+libobj-y += panda/pandalog.pb-c.o
+libobj-y += panda/pandalog.o
+libobj-y += panda/guestarch.o
+libobj-y += panda/guestarch.o
+#libobj-y += panda/panda_stats.o
+#libobj-y += panda/my_mem.o panda/shad_dir_32.o
+#libobj-y += panda/shad_dir_64.o
+#libobj-y += panda/taint_processor.o
+#libobj-$(CONFIG_LLVM) += panda/taint_api.o
 libobj-$(CONFIG_LLVM) += panda/panda_dynval_inst.o
 libobj-$(CONFIG_LLVM) += panda/panda_helper_call_morph.o
 libobj-y += panda/panda_externals.o
@@ -229,7 +236,7 @@ endif #CONFIG_BSD_USER
 # System emulator target
 ifdef CONFIG_SOFTMMU
 
-obj-y = arch_init.o cpus.o monitor.o machine.o gdbstub.o balloon.o ioport.o
+obj-y = arch_init.o cpus.o monitor.o machine.o gdbstub.o balloon.o ioport.o memory-access.o
 # virtio has to be here due to weird dependency between PCI and virtio-net.
 # need to fix this properly
 obj-$(CONFIG_NO_PCI) += pci-stub.o
@@ -240,7 +247,7 @@ obj-$(CONFIG_REALLY_VIRTFS) += 9pfs/virtio-9p-device.o
 obj-$(CONFIG_KVM) += kvm.o kvm-all.o
 obj-$(CONFIG_NO_KVM) += kvm-stub.o
 obj-y += memory.o
-LIBS+=-lz
+LIBS+=-lz -lprotobuf-c -lprotobuf 
 
 QEMU_CFLAGS += $(VNC_TLS_CFLAGS)
 QEMU_CFLAGS += $(VNC_SASL_CFLAGS)
@@ -404,10 +411,15 @@ obj-arm-y += strongarm.o
 obj-arm-y += collie.o
 obj-arm-y += pl041.o lm4549.o 
 ifdef CONFIG_ANDROID
-obj-android = android_arm.o goldfish_device.o goldfish_interrupt.o goldfish_timer.o
+obj-android-arm = android_arm.o 
+obj-arm-y += $(obj-android-arm)
+
+
+obj-android = goldfish_device.o goldfish_interrupt.o goldfish_timer.o
 obj-android += goldfish_events_device.o
 obj-android += goldfish_tty.o goldfish_nand.o goldfish_fb.o goldfish_memlog.o
 obj-android += goldfish_battery.o goldfish_switch.o goldfish_pipe.o
+obj-android += goldfish_mmc.o
 obj-android += android/utils/debug.o
 obj-android += android/utils/system.o
 obj-android += android/utils/misc.o
@@ -432,8 +444,7 @@ obj-android += android/gps.o
 obj-android += android/camera/camera-service.o android/camera/camera-capture-linux.o android/camera/camera-format-converters.o
 obj-android += android/hw-sensors.o
 obj-android += android/hw-control.o
-obj-android += goldfish_mmc.o
-obj-arm-y += $(obj-android)
+obj-y += $(obj-android)
 endif #CONFIG_ANDROID
 
 obj-sh4-y = shix.o r2d.o sh7750.o sh7750_regnames.o tc58128.o
@@ -526,68 +537,6 @@ obj-$(CONFIG_SMARTCARD_NSS) += $(addprefix ../libcacard/, $(libcacard-y))
 endif # CONFIG_BSD_USER
 endif # CONFIG_LINUX_USER
 
-##############################################################################
-### 
-### DECAF Sources
-###
-
-ifdef CONFIG_ANDROID
-
-#obj-decaf =  ../introspection/DECAF_callback.o
-obj-decaf =  introspection/DECAF_cmds.o
-obj-decaf +=  introspection/DECAF_main.o
-obj-decaf +=  introspection/DECAF_vm_compress.o
-obj-decaf +=  introspection/DECAF_linux_vmi.o
-obj-decaf +=  introspection/utils/HashtableWrapper.o
-obj-decaf +=  introspection/utils/OutputWrapper.o
-obj-decaf +=  introspection/utils/SimpleCallback.o
-obj-decaf +=  introspection/utils/HelperFunctions.o
-obj-decaf +=  introspection/utils/TULStringMapWrapper.o
-#  procmod.cpp \
-#  hookapi.cpp \
-#  hooks/function_map.cpp \
-
-QEMU_CFLAGS += -I$(SRC_PATH)/introspection/
-LIBS += -lstdc++ 
-
-
-libobj-y += $(obj-decaf)
-### 
-### END DECAF Sources
-###
-##############################################################################
-
-##############################################################################
-###
-### DroidScope Sources
-###
-
-
-obj-droidscope =  introspection/DroidScope/DS_Init.o
-obj-droidscope +=  introspection/DroidScope/linuxAPI/Context.o
-obj-droidscope +=  introspection/DroidScope/linuxAPI/ModuleServer.o
-obj-droidscope +=  introspection/DroidScope/linuxAPI/ProcessInfo.o
-obj-droidscope +=  introspection/DroidScope/DS_utils/SymbolMap.o
-obj-droidscope +=  introspection/DroidScope/DS_utils/RangeList.o
-obj-droidscope +=  introspection/DroidScope/dalvik/libdex/InstrUtils.o
-#obj-droidscope +=  introspection/DroidScope/dalvikAPI/DalvikMterpOpcodes.o
-#obj-droidscope +=  introspection/DroidScope/dalvikAPI/DalvikPrinter.o
-#obj-droidscope +=  introspection/DroidScope/dalvikAPI/DalvikDisableJit.o
-obj-droidscope +=  introspection/DroidScope/dalvikAPI/AndroidHelperFunctions.o
-obj-droidscope +=  introspection/DroidScope/dalvikAPI/AndroidHelperFunctionsCPP.o
-
-libobj-y += $(obj-droidscope)
-QEMU_CFLAGS += -I$(SRC_PATH)/introspection/DroidScope/
-LIBS += -lstdc++
-
-
-endif #CONFIG_ANDROID
-###
-### END DroidSCope Sources
-###
-##############################################################################
-
-
 
 obj-$(CONFIG_GDBSTUB_XML) += gdbstub-xml.o
 
@@ -617,7 +566,7 @@ clean:
 	rm -f *.o *.a *~ $(PROGS) nwfpe/*.o fpu/*.o
 	rm -f *.d */*.d tcg/*.o ide/*.o 9pfs/*.o panda/*.o *.bc *.bc1 *.bc2
 	rm -f hmp-commands.h qmp-commands-old.h gdbstub-xml.c
-	rm -f panda_plugins/* panda_tools/*
+	find panda_plugins -depth -mindepth 1 -delete
 
 ifdef CONFIG_TRACE_SYSTEMTAP
 	rm -f *.stp

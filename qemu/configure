@@ -38,19 +38,20 @@ compile_object() {
 compile_prog() {
   local_cflags="$1"
   local_ldflags="$2"
-  echo $cxx $QEMU_CFLAGS $local_cflags -o $TMPE $TMPC $LDFLAGS $local_ldflags >> config.log
+  echo $cc $QEMU_CFLAGS $local_cflags -o $TMPE $TMPC $LDFLAGS $local_ldflags >> config.log
   $cc $QEMU_CFLAGS $local_cflags -o $TMPE $TMPC $LDFLAGS $local_ldflags >> config.log 2>&1
 }
 
 compile_prog_cxx() {
   local_cxxflags="$1"
   local_ldflags="$2"
-  $cxx $QEMU_CFLAGS $QEMU_CXXFLAGS $local_cxxflags -o $TMPE $TMPCXX $LDFLAGS $local_ldflags > /dev/null 2> /dev/null
+  echo $cxx $QEMU_CFLAGS $local_cxxflags -o $TMPE $TMPC $LDFLAGS $local_ldflags >> config.log
+  $cxx $QEMU_CFLAGS $QEMU_CXXFLAGS $local_cxxflags -o $TMPE $TMPCXX $LDFLAGS $local_ldflags >> config.log 2>&1
 }
 
 compile_object_cxx() {
-  $cxx $QEMU_CFLAGS $QEMU_CXXFLAGS -c -o $TMPO $TMPCXX >> config.log
-  $cxx $QEMU_CFLAGS $QEMU_CXXFLAGS -c -o $TMPO $TMPCXX > /dev/null 2> /dev/null
+  echo $cxx $QEMU_CFLAGS $QEMU_CXXFLAGS -c -o $TMPO $TMPCXX >> config.log
+  $cxx $QEMU_CFLAGS $QEMU_CXXFLAGS -c -o $TMPO $TMPCXX >> config.log 2>&1
 }
 
 assemble_object_asm() {
@@ -123,6 +124,7 @@ audio_win_int=""
 cc_i386=i386-pc-linux-gnu-gcc
 libs_qga=""
 llvm="no"
+llvmver="3.3"
 android="no"
 
 target_list=""
@@ -2220,9 +2222,17 @@ if test "$llvm" != "no" ; then
 int main(void) { llvm::LLVMContext& c = llvm::getGlobalContext(); return 0; }
 EOF
   if test "$llvmdir" != ""; then
+    if [ -x "$llvmdir/bin/llvm-config-$llvmver" ]; then
+      llvm_config="$llvmdir/bin/llvm-config-$llvmver"
+    else
       llvm_config="$llvmdir/bin/llvm-config"
+    fi
   else
       llvm_config="llvm-config"
+  fi
+  if ! "$llvm_config" --version >> config.log 2>&1; then
+    feature_not_found "llvm (required for --enable-llvm)"
+    exit 1
   fi
   #llvm_components="jit bitreader bitwriter asmparser ipo linker engine"
   llvm_components=""
@@ -2250,18 +2260,30 @@ if test "$llvm" != "no" ; then
 fi
 
 if test "$llvm" != "no" ; then
-  if [ -e "$llvmdir/bin/clang" ] ; then
-        clang=`cd $llvmdir/bin/ && find \`pwd\` -name clang`
-  fi
-  if [ -x "$clang" ]; then
+  if [ -x "$llvmdir/bin/clang" ]; then
+    clang="$llvmdir/bin/clang"
+  elif clang --version >> config.log 2>&1; then
     : clang found
+    clang=`which clang`
   else
     feature_not_found "clang (required to be built with LLVM)"
     exit 1
   fi
 
+  if [ -x "$llvmdir/bin/clang++" ]; then
+    clangxx="$llvmdir/bin/clang++"
+  elif clang++ --version >> config.log 2>&1; then
+    : clang++ found
+    clangxx=`which clang++`
+  else
+    feature_not_found "clang++ (required to be built with LLVM)"
+    exit 1
+  fi
+
   if [ -e "$llvmdir/bin/llvm-link" ] ; then
-        llvm_link=`cd $llvmdir/bin/ && find \`pwd\` -name llvm-link`
+    llvm_link=`cd $llvmdir/bin/ && find \`pwd\` -name llvm-link`
+  elif [ -e "$llvmdir/bin/llvm-link-$llvmver" ] ; then
+    llvm_link=`cd $llvmdir/bin/ && find \`pwd\` -name llvm-link-$llvmver`
   fi
   if [ -x "$llvm_link" ]; then
     : llvm_link found
@@ -2851,7 +2873,7 @@ fi
 # After here, no more $cc or $ld runs
 
 if test "$debug" = "no" ; then
-  CFLAGS="-O2 $CFLAGS"
+  CFLAGS="$CFLAGS"
 fi
 
 # Consult white-list to determine whether to enable werror
@@ -3277,6 +3299,7 @@ if test "$llvm" = "yes" ; then
   fi
 
   echo "LLVMCC:=$clang" >> $config_host_mak
+  echo "LLVMCXX:=$clangxx" >> $config_host_mak
   echo "LLVM_LINK:=$llvm_link" >> $config_host_mak
   echo "CONFIG_LLVM=y" >> $config_host_mak
   echo "LLVM_CXXFLAGS=\$(filter-out $FILTERFLAGS,$llvm_cxxflags)" >> $config_host_mak
@@ -3549,17 +3572,17 @@ mkdir -p $target_dir/android
 mkdir -p $target_dir/android/utils
 mkdir -p $target_dir/android/camera
 mkdir -p $target_dir/telephony
-mkdir -p $target_dir/introspection
-mkdir -p $target_dir/introspection/utils
-mkdir -p $target_dir/introspection/DroidScope
-mkdir -p $target_dir/introspection/DroidScope/dalvik
-mkdir -p $target_dir/introspection/DroidScope/dalvik/libdex
-mkdir -p $target_dir/introspection/DroidScope/dalvik/vm
-mkdir -p $target_dir/introspection/DroidScope/dalvik/vm/interp
-mkdir -p $target_dir/introspection/DroidScope/dalvik/vm/oo
-mkdir -p $target_dir/introspection/DroidScope/DS_utils
-mkdir -p $target_dir/introspection/DroidScope/dalvikAPI
-mkdir -p $target_dir/introspection/DroidScope/linuxAPI
+mkdir -p $target_dir/panda_plugins
+mkdir -p $target_dir/panda_plugins/utils
+mkdir -p $target_dir/panda_plugins/DroidScope
+mkdir -p $target_dir/panda_plugins/DroidScope/dalvik
+mkdir -p $target_dir/panda_plugins/DroidScope/dalvik/libdex
+mkdir -p $target_dir/panda_plugins/DroidScope/dalvik/vm
+mkdir -p $target_dir/panda_plugins/DroidScope/dalvik/vm/interp
+mkdir -p $target_dir/panda_plugins/DroidScope/dalvik/vm/oo
+mkdir -p $target_dir/panda_plugins/DroidScope/DS_utils
+mkdir -p $target_dir/panda_plugins/DroidScope/dalvikAPI
+mkdir -p $target_dir/panda_plugins/DroidScope/linuxAPI
 
 
 if test "$target" = "arm-linux-user" -o "$target" = "armeb-linux-user" -o "$target" = "arm-bsd-user" -o "$target" = "armeb-bsd-user" ; then

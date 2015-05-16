@@ -197,7 +197,7 @@ static uint32_t prefetch_long(DisasContext *s, target_ulong eip) {
     return ldl_code(eip);
 }
 
-static uint64_t prefetch_quad(DisasContext *s, target_ulong eip) {
+__attribute__((unused)) static uint64_t prefetch_quad(DisasContext *s, target_ulong eip) {
     if ( (! s->is_first_instr) &&
          (s->tb_src_page != (eip & TARGET_PAGE_MASK) ||
           s->tb_src_page != ((eip + sizeof(uint64_t) - 1) & TARGET_PAGE_MASK))) {
@@ -7989,7 +7989,7 @@ static void gen_intermediate_code_internal(CPUState *env,
             // PANDA: ask if anyone wants execution notification
             bool panda_exec_cb = false;
             panda_cb_list *plist;
-            for(plist = panda_cbs[PANDA_CB_INSN_TRANSLATE]; plist != NULL; plist = plist->next) {
+            for(plist = panda_cbs[PANDA_CB_INSN_TRANSLATE]; plist != NULL; plist = panda_cb_list_next(plist)) {
                 panda_exec_cb |= plist->entry.insn_translate(env, pc_ptr);
             }
 

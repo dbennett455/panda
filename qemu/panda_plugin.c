@@ -19,6 +19,8 @@ PANDAENDCOMMENT */
 #include "hmp.h"
 #include "error.h"
 
+#include <libgen.h>
+
 #ifdef CONFIG_LLVM
 #include "panda/panda_helper_call_morph.h"
 #include "tcg.h"
@@ -38,15 +40,22 @@ panda_cb_list *panda_cbs[PANDA_CB_LAST];
 char panda_argv[MAX_PANDA_PLUGIN_ARGS][256];
 int panda_argc;
 
+int nb_panda_plugins = 0;
 panda_plugin panda_plugins[MAX_PANDA_PLUGINS];
-int nb_panda_plugins;
+
 bool panda_plugins_to_unload[MAX_PANDA_PLUGINS];
+
 bool panda_plugin_to_unload = false;
+
+int nb_panda_plugins_loaded = 0;
+char *panda_plugins_loaded[MAX_PANDA_PLUGINS];
 
 bool panda_please_flush_tb = false;
 bool panda_update_pc = false;
 bool panda_use_memcb = false;
 bool panda_tb_chaining = true;
+
+
 
 bool panda_add_arg(const char *arg, int arglen) {
     if (arglen > 255) return false;
@@ -55,6 +64,17 @@ bool panda_add_arg(const char *arg, int arglen) {
 }
 
 bool panda_load_plugin(const char *filename) {
+    // don't load the same plugin twice
+    uint32_t i;
+    for (i=0; i<nb_panda_plugins_loaded; i++) {
+        if (0 == (strcmp(filename, panda_plugins_loaded[i]))) {
+            printf ("panda_load_plugin: %s already loaded\n", filename);
+            return 1;
+        }
+    }    
+    panda_plugins_loaded[nb_panda_plugins_loaded] = strdup(filename);
+    nb_panda_plugins_loaded ++;
+    printf ("loading %s\n", filename);
     void *plugin = dlopen(filename, RTLD_NOW);
     if(!plugin) {
         fprintf(stderr, "Failed to load %s: %s\n", filename, dlerror());
@@ -68,15 +88,47 @@ bool panda_load_plugin(const char *filename) {
     }
     if(init_fn(plugin)) {
         panda_plugins[nb_panda_plugins].plugin = plugin;
-        strncpy(panda_plugins[nb_panda_plugins].name, basename(filename), 256);
+        strncpy(panda_plugins[nb_panda_plugins].name, basename((char *) filename), 256);
         nb_panda_plugins++;
+        fprintf (stderr, "Success\n");
         return true;
     }
     else {
         dlclose(plugin);
+        fprintf (stderr, "Fail. init_fn returned 0\n");
         return false;
     }
 }
+
+extern const char *qemu_file;
+
+// translate plugin name into path to .so
+char *panda_plugin_path(const char *plugin_name) {    
+    char *plugin_path = g_malloc0(1024);
+    char *plugin_dir = getenv("PANDA_PLUGIN_DIR");
+    if (plugin_dir != NULL) {
+        snprintf(plugin_path, 1024, "%s/panda_%s.so", plugin_dir, plugin_name);
+    } else {
+        char *dir = strdup(qemu_file);
+        dir = dirname( (char *) dir);
+        snprintf(plugin_path, 1024, "%s/panda_plugins/panda_%s.so", dir, plugin_name);
+    }
+    return plugin_path;
+}
+
+
+void panda_require(const char *plugin_name) {
+    printf ("panda_require: %s\n", plugin_name);
+    // translate plugin name into a path to .so
+    char *plugin_path = panda_plugin_path(plugin_name);
+    // load plugin same as in vl.c
+    if (!panda_load_plugin(plugin_path)) {
+        fprintf(stderr, "panda_require: FAIL: Unable to load plugin `%s' `%s'\n", plugin_name, plugin_path);
+        abort();
+    }
+}
+
+    
 
 // Internal: remove a plugin from the global array
 static void panda_delete_plugin(int i) {
@@ -100,7 +152,20 @@ void panda_do_unload_plugin(int plugin_idx){
     dlclose(plugin);
 }
 
-void panda_unload_plugin(int plugin_idx) {
+void panda_unload_plugin(void* plugin) {
+    int i;
+    for (i = 0; i < nb_panda_plugins; i++) {
+        if (panda_plugins[i].plugin == plugin) {
+            panda_unload_plugin_idx(i);
+            break;
+        }
+    }
+}
+
+void panda_unload_plugin_idx(int plugin_idx) {
+    if (plugin_idx >= nb_panda_plugins || plugin_idx < 0) {
+        return;
+    }
     panda_plugin_to_unload = true;
     panda_plugins_to_unload[plugin_idx] = true;
 }
@@ -128,6 +193,7 @@ void panda_register_callback(void *plugin, panda_cb_type type, panda_cb cb) {
     new_list->owner = plugin;
     new_list->prev = NULL;
     new_list->next = NULL;
+    new_list->enabled = true;
     if(panda_cbs[type] != NULL) {
         new_list->next = panda_cbs[type];
         panda_cbs[type]->prev = new_list;
@@ -162,6 +228,48 @@ void panda_unregister_callbacks(void *plugin) {
                 plist = plist->next;
             }
         }
+    }
+}
+
+void panda_enable_plugin(void *plugin) {
+    int i;
+    for (i = 0; i < PANDA_CB_LAST; i++) {
+        panda_cb_list *plist;
+        plist = panda_cbs[i];
+        while(plist != NULL) {
+            if (plist->owner == plugin) {
+                plist->enabled = true;
+            }
+            plist = plist->next;
+        }
+    }
+}
+
+void panda_disable_plugin(void *plugin) {
+    int i;
+    for (i = 0; i < PANDA_CB_LAST; i++) {
+        panda_cb_list *plist;
+        plist = panda_cbs[i];
+        while(plist != NULL) {
+            if (plist->owner == plugin) {
+                plist->enabled = false;
+            }
+            plist = plist->next;
+        }
+    }
+}
+
+panda_cb_list* panda_cb_list_next(panda_cb_list* plist) {
+    // Allows to navigate the callback linked list skipping disabled callbacks
+    panda_cb_list* node = plist->next;
+    if (node == NULL) {
+        return node;
+    }
+
+    if (node->enabled) {
+        return node;
+    } else {
+        return panda_cb_list_next(node);
     }
 }
 
@@ -295,9 +403,12 @@ panda_arg_list *panda_get_args(const char *plugin_name) {
                     break;
                 }
             }
-            if (! (found_colon && found_equals)) {
+            if (!found_colon) {
                 // malformed argument
                 goto fail;
+            }
+            if (!found_equals) {
+                list[ret_idx].value = (char *) "";
             }
             ret_idx++;
         }
@@ -313,9 +424,110 @@ fail:
     return NULL;
 }
 
+bool panda_parse_bool(panda_arg_list *args, const char *argname) {
+    if (!args) return false;
+    int i;
+    for (i = 0; i < args->nargs; i++) {
+        if (strcmp(args->list[i].key, argname) == 0) {
+            char *val = args->list[i].value;
+            if (strcmp("false", val) == 0 || strcmp("no", val) == 0) {
+                return false;
+            } else {
+                return true;
+            }
+        }
+    }
+    // not found
+    return false;
+}
+
+target_ulong panda_parse_ulong(panda_arg_list *args, const char *argname, target_ulong defval) {
+    if (!args) return defval;
+    int i;
+    for (i = 0; i < args->nargs; i++) {
+        if (strcmp(args->list[i].key, argname) == 0) {
+            return strtoul(args->list[i].value, NULL, 0);
+        }
+    }
+    return defval;
+}
+
+uint64_t panda_parse_uint64(panda_arg_list *args, const char *argname, uint64_t defval) {
+    if (!args) return defval;
+    int i;
+    for (i = 0; i < args->nargs; i++) {
+        if (strcmp(args->list[i].key, argname) == 0) {
+            return strtoull(args->list[i].value, NULL, 0);
+        }
+    }
+    return defval;
+}
+
+double panda_parse_double(panda_arg_list *args, const char *argname, double defval) {
+    if (!args) return defval;
+    int i;
+    for (i = 0; i < args->nargs; i++) {
+        if (strcmp(args->list[i].key, argname) == 0) {
+            return strtod(args->list[i].value, NULL);
+        }
+    }
+    return defval;
+}
+
+
+char** str_split(char* a_str, const char a_delim)  {
+    char** result    = 0;
+    size_t count     = 0;
+    char* tmp        = a_str;
+    char* last_comma = 0;
+    char delim[2];
+    delim[0] = a_delim;
+    delim[1] = 0;
+    /* Count how many elements will be extracted. */
+    while (*tmp) {
+        if (a_delim == *tmp) {
+            count++;
+            last_comma = tmp;
+        }
+        tmp++;
+    }
+    /* Add space for trailing token. */
+    count += last_comma < (a_str + strlen(a_str) - 1);
+    /* Add space for terminating null string so caller
+       knows where the list of returned strings ends. */
+    count++;
+    result = malloc(sizeof(char*) * count);
+    if (result) {
+        size_t idx  = 0;
+        char* token = strtok(a_str, delim);
+        while (token)  {
+            assert(idx < count);
+            *(result + idx++) = strdup(token);
+            token = strtok(0, delim);
+        }
+        assert(idx == count - 1);
+        *(result + idx) = 0;
+    }
+    return result;
+}
+
+
+// Returns pointer to string inside arg list, freed when list is freed.
+const char *panda_parse_string(panda_arg_list *args, const char *argname, const char *defval) {
+    if (!args) return defval;
+    int i;
+    for (i = 0; i < args->nargs; i++) {
+        if (strcmp(args->list[i].key, argname) == 0) {
+            return args->list[i].value;
+        }
+    }
+    return defval;
+}
+
 // Free a list of parsed arguments
 void panda_free_args(panda_arg_list *args) {
     int i;
+    if (!args) return;
     for (i = 0; i < args->nargs; i++) {
         g_free(args->list[i].argptr);
     }
@@ -335,8 +547,9 @@ void qmp_load_plugin(const char *filename, Error **errp) {
 void qmp_unload_plugin(int64_t index, Error **errp) {
     if (index >= nb_panda_plugins || index < 0) {
         // TODO: errp
+    } else {
+        panda_unload_plugin_idx(index);
     }
-    panda_unload_plugin(index);
 }
 
 void qmp_list_plugins(Error **errp) {
@@ -373,7 +586,7 @@ void hmp_panda_list_plugins(Monitor *mon, const QDict *qdict) {
 void hmp_panda_plugin_cmd(Monitor *mon, const QDict *qdict) {
     panda_cb_list *plist;
     const char *cmd = qdict_get_try_str(qdict, "cmd");
-    for(plist = panda_cbs[PANDA_CB_MONITOR]; plist != NULL; plist = plist->next) {
+    for(plist = panda_cbs[PANDA_CB_MONITOR]; plist != NULL; plist = panda_cb_list_next(plist)) {
         plist->entry.monitor(mon, cmd);
     }
 }

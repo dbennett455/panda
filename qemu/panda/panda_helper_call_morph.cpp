@@ -1,15 +1,15 @@
 /* PANDABEGINCOMMENT
- * 
+ *
  * Authors:
  *  Tim Leek               tleek@ll.mit.edu
  *  Ryan Whelan            rwhelan@ll.mit.edu
  *  Joshua Hodosh          josh.hodosh@ll.mit.edu
  *  Michael Zhivich        mzhivich@ll.mit.edu
  *  Brendan Dolan-Gavitt   brendandg@gatech.edu
- * 
- * This work is licensed under the terms of the GNU GPL, version 2. 
- * See the COPYING file in the top-level directory. 
- * 
+ *
+ * This work is licensed under the terms of the GNU GPL, version 2.
+ * See the COPYING file in the top-level directory.
+ *
 PANDAENDCOMMENT */
 
 /*
@@ -19,7 +19,8 @@ PANDAENDCOMMENT */
  * code generated from TCG.
  */
 
-#include "stdio.h"
+#include <stdio.h>
+#include <libgen.h>
 
 #include "llvm/Linker.h"
 #include "llvm/Support/SourceMgr.h"
@@ -31,12 +32,11 @@ PANDAENDCOMMENT */
 #include "llvm/IRReader/IRReader.h"
 #include "llvm/Support/raw_ostream.h"
 
-#include "config.h"
-#include "tcg-llvm.h"
-
 extern "C" {
-#include "panda_externals.h"
+#include "config.h"
 }
+#include "tcg-llvm.h"
+#include "panda_externals.h"
 #include "panda_helper_call_morph.h"
 
 namespace llvm {
@@ -88,7 +88,7 @@ void PandaHelperCallVisitor::visitCallInst(CallInst &I){
             || I.getCalledFunction()->getName().equals("helper_outl")){
         return; // Ignore intrinsics, declarations, memory, and I/O  functions
     }
-    
+
     // Call LLVM version of helper
     Module *m = I.getParent()->getParent()->getParent();
     assert(m);
@@ -104,7 +104,7 @@ void PandaHelperCallVisitor::visitCallInst(CallInst &I){
     for (i = I.getCalledFunction()->arg_begin();
             i != I.getCalledFunction()->arg_end(); i++, j++){
         if (I.getArgOperand(j)->getType() == i->getType()){
-            return; // No cast required
+            continue; // No cast required
         }
         if (CastInst::isCastable(I.getArgOperand(j)->getType(), i->getType())){
             // False arguments assume things are unsigned, and I'm pretty sure
@@ -128,6 +128,7 @@ void PandaHelperCallVisitor::visitCallInst(CallInst &I){
 
 } // namespace llvm
 
+extern const char *qemu_loc;
 /*
  * Start the process of including the execution of QEMU helper functions in the
  * LLVM JIT.
@@ -143,14 +144,11 @@ void init_llvm_helpers(){
     llvm::LLVMContext &ctx = mod->getContext();
 
     // Read helper module, link into JIT, verify
-    // XXX: Assumes you are invoking QEMU from the root of the qemu/ directory
-    std::string bitcode = TARGET_ARCH;
-#if defined(CONFIG_SOFTMMU)
-    bitcode.append("-softmmu");
-#elif defined(CONFIG_LINUX_USER)
-    bitcode.append("-linux-user");
-#endif
+    char *exe = strdup(qemu_loc);
+    std::string bitcode(dirname(exe));
+    free(exe);
     bitcode.append("/llvm-helpers.bc");
+
     llvm::SMDiagnostic Err;
     llvm::Module *helpermod = ParseIRFile(bitcode, Err, ctx);
     if (!helpermod) {

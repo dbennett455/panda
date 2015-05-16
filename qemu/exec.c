@@ -498,7 +498,7 @@ static void code_gen_alloc(unsigned long tb_size)
         code_gen_buffer_size = DEFAULT_CODE_GEN_BUFFER_SIZE;
 #else
         /* XXX: needs adjustments */
-        code_gen_buffer_size = (unsigned long)(ram_size / 4);
+        code_gen_buffer_size = (unsigned long)(ram_size * 16);
 #endif
     }
     if (code_gen_buffer_size < MIN_CODE_GEN_BUFFER_SIZE)
@@ -1031,7 +1031,7 @@ TranslationBlock *tb_gen_code(CPUState *env,
     uint8_t *tc_ptr;
     tb_page_addr_t phys_pc, phys_page2;
     target_ulong virt_page2;
-    int code_gen_size;
+    int code_gen_size, i;
 
     phys_pc = get_page_addr_code(env, pc);
     tb = tb_alloc(pc);
@@ -1049,6 +1049,23 @@ TranslationBlock *tb_gen_code(CPUState *env,
     tb->flags = flags;
     tb->cflags = cflags;
     cpu_gen_code(env, tb, &code_gen_size);
+#ifdef CONFIG_LLVM
+    // Sanity check. We had a bug before where we were misrecording
+    // translated code sizes, and so TC blocks appeared to overlap.
+    if (generate_llvm) {
+        for (i = 0; i < nb_tbs; i++) {
+            TranslationBlock *other = &tbs[i];
+            if (tb == other) continue;
+            if (other->llvm_tc_ptr <= tb->llvm_tc_ptr &&
+                    tb->llvm_tc_ptr < other->llvm_tc_end) {
+                assert(false && "Allocating apparently overlapping blocks!");
+            } else if (other->llvm_tc_ptr < tb->llvm_tc_end &&
+                    tb->llvm_tc_end <= other->llvm_tc_end) {
+                assert(false && "Allocating apparently overlapping blocks!");
+            }
+        }
+    }
+#endif
     code_gen_ptr = (void *)(((unsigned long)code_gen_ptr + code_gen_size + CODE_GEN_ALIGN - 1) & ~(CODE_GEN_ALIGN - 1));
 
     /* check next page if needed */
@@ -1832,6 +1849,8 @@ const CPULogItem cpu_log_items[] = {
       "show generated LLVM IR code" },
     { CPU_LOG_LLVM_ASM, "llvm_asm",
       "show LLVM-generated assembly code" },
+    { CPU_LOG_TAINT_OPS, "taint_ops",
+      "show taint ops for each llvm bb", },
 #endif
     { 0, NULL, NULL },
 };
@@ -4183,7 +4202,7 @@ static int cpu_physical_memory_rw_ex(target_phys_addr_t addr, uint8_t *buf,
                 if (rr_mode == RR_REPLAY) {
                     // run all callbacks registered for cpu_physical_memory_rw ram case
                     panda_cb_list *plist;
-                    for (plist = panda_cbs[PANDA_CB_REPLAY_BEFORE_CPU_PHYSICAL_MEM_RW_RAM]; plist != NULL; plist = plist->next) {
+                    for (plist = panda_cbs[PANDA_CB_REPLAY_BEFORE_CPU_PHYSICAL_MEM_RW_RAM]; plist != NULL; plist = panda_cb_list_next(plist)) {
                         plist->entry.replay_before_cpu_physical_mem_rw_ram(cpu_single_env, is_write, buf, addr1, l);
                     }
                 }
@@ -4252,7 +4271,7 @@ static int cpu_physical_memory_rw_ex(target_phys_addr_t addr, uint8_t *buf,
                 if (rr_mode == RR_REPLAY) {
                     // run all callbacks registered for cpu_physical_memory_rw ram case
                     panda_cb_list *plist;
-                    for (plist = panda_cbs[PANDA_CB_REPLAY_BEFORE_CPU_PHYSICAL_MEM_RW_RAM]; plist != NULL; plist = plist->next) {
+                    for (plist = panda_cbs[PANDA_CB_REPLAY_BEFORE_CPU_PHYSICAL_MEM_RW_RAM]; plist != NULL; plist = panda_cb_list_next(plist)) {
                         plist->entry.replay_before_cpu_physical_mem_rw_ram(cpu_single_env, is_write, buf, addr1, l);
                     }
                 }
@@ -5011,6 +5030,8 @@ int cpu_memory_rw_debug(CPUState *env, target_ulong addr,
     return 0;
 }
 
+int cpu_memory_rw(CPUState *env, target_ulong addr,
+                  uint8_t *buf, int len, int is_write);
 /* virtual memory access for debug (includes writing to ROM) */
 int cpu_memory_rw(CPUState *env, target_ulong addr,
                   uint8_t *buf, int len, int is_write)

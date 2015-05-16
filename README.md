@@ -1,30 +1,43 @@
 PANDA
 ====
-PANDA is the Platform for Architecture-Neutral Dynamic Analysis.  It is a
-platform based on QEMU 1.0.1 and LLVM 3.3 for performing dynamic software
-analysis, abstracting architecture-level details away with a clean plugin
-interface.  It is currently being developed in collaboration with MIT Lincoln
+PANDA is an open-source Platform for Architecture-Neutral Dynamic Analysis. It is built upon the QEMU whole system emulator, and so analyses have access to all code executing in the guest and all data. PANDA adds the ability to record and replay executions, enabling iterative, deep, whole system analyses. Further, the replay log files are compact and shareable, allowing for repeatable experiments. A nine billion instruction boot of FreeBSD, e.g., is represented by only a few hundred MB. PANDA leverages QEMU's support of thirteen different CPU architectures to make analyses of those diverse instruction sets possible within the LLVM IR. In this way, PANDA can have a single dynamic taint analysis, for example, that precisely supports many CPUs. PANDA analyses are written in a simple plugin architecture which includes a mechanism to share functionality between plugins, increasing analysis code re-use and simplifying complex analysis development. 
+
+It is currently being developed in collaboration with MIT Lincoln
 Laboratory, Georgia Tech, and Northeastern University.
 
 Building
 ----
-Instructions for building PANDA can be found in docs/compile.txt.
+Instructions for building PANDA can be found in [docs/compile.md](docs/compile.md).
+If you are looking for a (perhaps) quicker start, the panda_install.bash script should
+be able to install PANDA + all of its dependencies.
+It is basically `compile.md` translated into a script.
+Two caveats.  
+
+1. You will have to have first compiled and installed llvm-3.3 in ~/llvm.
+2. We only vouch for build on Debian 7 system. 
+
+Support
+----
+If you need help with PANDA, or want to discuss the project, you can join our IRC channel at #panda-re on Freenode, or join the [PANDA mailing list](http://mailman.mit.edu/mailman/listinfo/panda-users).
 
 PANDA Plugins
 ----
-Details about the architecture-neutral plugin interface can be found in
-docs/PANDA.md.  Existing plugins and tools can be found in qemu/panda\_plugins
-and qemu/panda\_tools.
+Details about the architecture-neutral plugin interface can be
+found in [docs/PANDA.md](docs/PANDA.md).
+Existing plugins and tools can be found in
+[qemu/panda\_plugins](qemu/panda_plugins) and
+[qemu/panda\_tools](qemu/panda_tools).
 
 Record/Replay
 ----
 PANDA currently supports whole-system record/replay execution of x86, x86\_64,
-and ARM guests.  Documentation can be found in docs/record\_replay.md
+and ARM guests.
+Documentation can be found in [docs/record\_replay.md](docs/record_replay.md).
 
 Android Support
 ----
 PANDA supports ARMv7 Android guests, running on the Goldfish emulated platform.
-Documentation can be found in docs/Android.md
+Documentation can be found in [docs/Android.md](docs/Android.md).
 
 Publications
 ----
@@ -35,6 +48,10 @@ Communications Security (CCS), Berlin, Germany, November 2013.
 * [2] R. Whelan, T. Leek, D. Kaeli.  Architecture-Independent Dynamic
 Information Flow Tracking. 22nd International Conference on Compiler
 Construction (CC), Rome, Italy, March 2013.
+
+* [3] B. Dolan-Gavitt, J. Hodosh, P. Hulin, T. Leek, R. Whelan.  
+Repeatable Reverse Engineering for the Greater Good with PANDA.
+TR CUCS-023-14
 
 License
 ----

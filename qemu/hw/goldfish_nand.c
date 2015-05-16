@@ -355,7 +355,7 @@ static uint32_t nand_dev_read_file(nand_dev *dev, uint32_t data, uint64_t addr, 
         }
 #ifdef TARGET_I386
         if (kvm_enabled())
-            cpu_synchronize_state(cpu_single_env, 0);
+            cpu_synchronize_state(cpu_single_env);
 #endif
         cpu_memory_rw(cpu_single_env, data, dev->data, read_len, 1);
         data += read_len;
@@ -383,7 +383,7 @@ static uint32_t nand_dev_write_file(nand_dev *dev, uint32_t data, uint64_t addr,
             write_len = len;
 #ifdef TARGET_I386
         if (kvm_enabled())
-                cpu_synchronize_state(cpu_single_env, 0);
+                cpu_synchronize_state(cpu_single_env);
 #endif
         cpu_memory_rw(cpu_single_env, data, dev->data, write_len, 0);
 #if defined(ANDROID_QCOW)
@@ -474,7 +474,7 @@ uint32_t nand_dev_do_cmd(GoldfishNandDevice *s, uint32_t cmd)
             size = dev->devname_len;
 #ifdef TARGET_I386
         if (kvm_enabled())
-                cpu_synchronize_state(cpu_single_env, 0);
+                cpu_synchronize_state(cpu_single_env);
 #endif
         cpu_memory_rw(cpu_single_env, s->data, (uint8_t*)dev->devname, size, 1);
         return size;
@@ -492,7 +492,7 @@ uint32_t nand_dev_do_cmd(GoldfishNandDevice *s, uint32_t cmd)
             return nand_dev_read_file(dev, s->data, addr, size);
 #ifdef TARGET_I386
         if (kvm_enabled())
-                cpu_synchronize_state(cpu_single_env, 0);
+                cpu_synchronize_state(cpu_single_env);
 #endif
         cpu_memory_rw(cpu_single_env,s->data, &dev->data[addr], size, 1);
         return size;
@@ -512,7 +512,7 @@ uint32_t nand_dev_do_cmd(GoldfishNandDevice *s, uint32_t cmd)
             return nand_dev_write_file(dev, s->data, addr, size);
 #ifdef TARGET_I386
         if (kvm_enabled())
-                cpu_synchronize_state(cpu_single_env, 0);
+                cpu_synchronize_state(cpu_single_env);
 #endif
         cpu_memory_rw(cpu_single_env,s->data, &dev->data[addr], size, 0);
         return size;
@@ -923,7 +923,7 @@ static int goldfish_nand_init(GoldfishDevice *dev)
         uint64_t    sysBytes = s->system_size;
 
         if (sysBytes == 0) {
-            PANIC("Invalid system partition size: %jd", sysBytes);
+            printf("Invalid system partition size for non-QCOW image: %jd", sysBytes);
         }
 
         snprintf(tmp,sizeof(tmp),"system");
@@ -947,6 +947,11 @@ static int goldfish_nand_init(GoldfishDevice *dev)
         } /*else {
             PANIC("Missing initial system image path!");
         }*/
+        if (s->device_flags & (GOLDFISH_NAND_FLAG_BLOCK +1)){
+            pstrcat(tmp, sizeof(tmp), ",pagesize=512");
+            pstrcat(tmp, sizeof(tmp), ",extrasize=0");
+            pstrcat(tmp, sizeof(tmp), ",erasepages=1");
+        }
         nand_add_dev(s, tmp);
     }
 
@@ -958,7 +963,7 @@ static int goldfish_nand_init(GoldfishDevice *dev)
         uint64_t    dataBytes = s->user_data_size;
 
         if (dataBytes == 0) {
-            PANIC("Invalid data partition size: %jd", dataBytes);
+            printf("Invalid data partition size for non-QCOW image: %jd", dataBytes);
         }
 
         snprintf(tmp,sizeof(tmp),"userdata,size=0x%jx", dataBytes);
@@ -982,6 +987,11 @@ static int goldfish_nand_init(GoldfishDevice *dev)
         if (initImage && *initImage) {
             pstrcat(tmp, sizeof(tmp), ",initfile=");
             pstrcat(tmp, sizeof(tmp), initImage);
+        }
+        if (s->device_flags & (GOLDFISH_NAND_FLAG_BLOCK +1)){
+            pstrcat(tmp, sizeof(tmp), ",pagesize=512");
+            pstrcat(tmp, sizeof(tmp), ",extrasize=0");
+            pstrcat(tmp, sizeof(tmp), ",erasepages=1");
         }
         nand_add_dev(s, tmp);
     }
@@ -1009,6 +1019,11 @@ static int goldfish_nand_init(GoldfishDevice *dev)
                 pstrcat(tmp, sizeof(tmp), ",file=");
                 pstrcat(tmp, sizeof(tmp), partPath);
             }
+        }
+        if (s->device_flags & (GOLDFISH_NAND_FLAG_BLOCK +1)){
+            pstrcat(tmp, sizeof(tmp), ",pagesize=512");
+            pstrcat(tmp, sizeof(tmp), ",extrasize=0");
+            pstrcat(tmp, sizeof(tmp), ",erasepages=1");
         }
         nand_add_dev(s, tmp);
     }
@@ -1072,6 +1087,7 @@ static const VMStateDescription vmstate_goldfish_nand = {
         VMSTATE_UINT32(nand_dev_count, GoldfishNandDevice),
         VMSTATE_STRUCT_ARRAY(nand_devs, GoldfishNandDevice, MAX_NAND_DEVS, 2,
                              vmstate_nand_dev, nand_dev),
+        VMSTATE_UINT32(device_flags, GoldfishNandDevice),
         VMSTATE_END_OF_LIST()
     }
 };
@@ -1092,13 +1108,14 @@ static GoldfishDeviceInfo goldfish_nand_info = {
         DEFINE_PROP_STRING("name", GoldfishDevice, name),
         DEFINE_PROP_STRING("system_path", GoldfishNandDevice, system_path),
         DEFINE_PROP_STRING("system_init_path", GoldfishNandDevice, system_init_path),
-        DEFINE_PROP_UINT64("system_size", GoldfishNandDevice, system_size, 0x7100000),
+        DEFINE_PROP_UINT64("system_size", GoldfishNandDevice, system_size, 0),
         DEFINE_PROP_STRING("user_data_path", GoldfishNandDevice, user_data_path),
         DEFINE_PROP_STRING("user_data_init_path", GoldfishNandDevice, user_data_init_path),
-        DEFINE_PROP_UINT64("user_data_size", GoldfishNandDevice, user_data_size, 0x5000000),
+        DEFINE_PROP_UINT64("user_data_size", GoldfishNandDevice, user_data_size, 0),
         DEFINE_PROP_STRING("cache_path", GoldfishNandDevice, cache_path),
-        DEFINE_PROP_UINT64("cache_size", GoldfishNandDevice, cache_size, 0x4200000),
+        DEFINE_PROP_UINT64("cache_size", GoldfishNandDevice, cache_size, 0),
         DEFINE_PROP_UINT32("nand_dev_count", GoldfishNandDevice, nand_dev_count, 0),
+        DEFINE_PROP_BIT("ext4", GoldfishNandDevice, device_flags, GOLDFISH_NAND_FLAG_BLOCK, 0),
         DEFINE_PROP_END_OF_LIST(),
     },
 };

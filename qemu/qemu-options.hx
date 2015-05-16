@@ -2613,6 +2613,10 @@ DEF("replay", HAS_ARG, QEMU_OPTION_replay,
     "-replay <snapshot>\n"
     "                replay the recording that starts at <snapshot>\n", QEMU_ARCH_ALL)
 
+DEF("pandalog", HAS_ARG, QEMU_OPTION_pandalog,
+    "-pandalog <filename>\n"
+    "                enable panda logging to file\n", QEMU_ARCH_ALL)
+
 DEF("panda-plugin", HAS_ARG, QEMU_OPTION_panda_plugin,
     "-panda-plugin <file>\n"
     "                load PANDA plugin from <file>\n", QEMU_ARCH_ALL)
@@ -2621,9 +2625,10 @@ DEF("panda-arg", HAS_ARG, QEMU_OPTION_panda_arg,
     "-panda-arg <plugin:opt=val>\n"
     "                pass <opt=val> to <plugin>\n", QEMU_ARCH_ALL)
 
-DEF("tubtf", 0, QEMU_OPTION_tubtf,
-"-tubtf          use Tim's uncomplicated binary trace format for traces", QEMU_ARCH_ALL)
-
+DEF("panda", HAS_ARG, QEMU_OPTION_panda_plugins,
+    "-panda <plugin1_name:opt1=val1,opt2=val2;plugin2_name>\n"
+    "               load <plugin1> with <opt1=val1> and <opt2=val2>; load <plugin2>\n"
+    "               uses qemubuilddir/panda_plugins/panda_%s.so by default\n", QEMU_ARCH_ALL)
 
 HXCOMM This is the last statement. Insert new options before this line!
 STEXI

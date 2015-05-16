@@ -153,7 +153,7 @@ int cpu_restore_state(TranslationBlock *tb,
     // PANDA instrumentation: CPU restore state
     panda_cb_list *plist;
     for(plist = panda_cbs[PANDA_CB_CPU_RESTORE_STATE]; plist != NULL;
-            plist = plist->next) {
+            plist = panda_cb_list_next(plist)) {
         plist->entry.cb_cpu_restore_state(env, tb);
     }
  
@@ -199,15 +199,16 @@ int cpu_restore_state(TranslationBlock *tb,
     s->tb_next = tb->tb_next;
 #endif
     j = tcg_gen_code_search_pc(s, (uint8_t *)tc_ptr, searched_pc - tc_ptr);
+
+#ifdef CONFIG_LLVM
+    }
+#endif
     if (j < 0)
         return -1;
     /* now find start of instruction before */
     while (gen_opc_instr_start[j] == 0)
         j--;
 
-#ifdef CONFIG_LLVM
-    }
-#endif
 
     env->icount_decr.u16.low -= gen_opc_icount[j];
 
